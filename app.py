@@ -4,8 +4,6 @@ import os
 from dotenv import load_dotenv
 from PIL import Image
 import io
-import hashlib
-import hmac
 
 load_dotenv()
 
@@ -13,13 +11,13 @@ st.set_page_config(page_title="Gemini Chat App", page_icon="🤖")
 
 def check_password():
     """パスワード認証を行う関数"""
-    
+
     def password_entered():
         """パスワードが入力されたときの処理"""
-        auth_user = os.getenv("AUTH_USERNAME", "admin")
-        auth_pass = os.getenv("AUTH_PASSWORD", "password")
-        
-        if (st.session_state["username"] == auth_user and 
+        auth_user = os.getenv("AUTH_USERNAME")
+        auth_pass = os.getenv("AUTH_PASSWORD")
+
+        if (st.session_state["username"] == auth_user and
             st.session_state["password"] == auth_pass):
             st.session_state["password_correct"] = True
             del st.session_state["password"]
@@ -33,19 +31,19 @@ def check_password():
     if not st.session_state["password_correct"]:
         st.title("🔐 ログイン")
         st.write("このアプリケーションにアクセスするにはログインが必要です")
-        
+
         with st.form("login_form"):
             st.text_input("ユーザー名", key="username")
             st.text_input("パスワード", type="password", key="password")
-            submit_button = st.form_submit_button("ログイン", on_click=password_entered)
-            
+            st.form_submit_button("ログイン", on_click=password_entered)
+
         if "password_correct" in st.session_state and not st.session_state["password_correct"]:
             st.error("😕 ユーザー名またはパスワードが正しくありません")
-        
+
         st.markdown("---")
         st.caption("管理者から認証情報を取得してください")
         return False
-    
+
     return True
 
 if not check_password():
@@ -76,7 +74,7 @@ for message in st.session_state.messages:
 
 with st.container():
     col1, col2 = st.columns([1, 6])
-    
+
     with col1:
         uploaded_file = st.file_uploader(
             "画像を添付",
@@ -84,13 +82,13 @@ with st.container():
             key="image_uploader",
             label_visibility="collapsed"
         )
-        
+
         if uploaded_file is not None:
             if uploaded_file not in st.session_state.uploaded_images:
                 st.session_state.uploaded_images.append(uploaded_file)
                 st.success("画像を追加しました")
                 st.rerun()
-    
+
     with col2:
         if st.session_state.uploaded_images:
             st.write("添付画像:")
@@ -105,7 +103,7 @@ with st.container():
 if prompt := st.chat_input("メッセージを入力してください"):
     images_to_send = []
     image_data_for_history = []
-    
+
     if st.session_state.uploaded_images:
         for img_file in st.session_state.uploaded_images:
             img_bytes = img_file.read()
@@ -113,13 +111,13 @@ if prompt := st.chat_input("メッセージを入力してください"):
             images_to_send.append(img)
             image_data_for_history.append(img_bytes)
             img_file.seek(0)
-    
+
     st.session_state.messages.append({
-        "role": "user", 
+        "role": "user",
         "content": prompt,
         "images": image_data_for_history if image_data_for_history else None
     })
-    
+
     with st.chat_message("user"):
         if image_data_for_history:
             cols = st.columns(min(len(image_data_for_history), 3))
@@ -127,25 +125,25 @@ if prompt := st.chat_input("メッセージを入力してください"):
                 with cols[idx % 3]:
                     st.image(img_data, width=200)
         st.markdown(prompt)
-    
+
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-        
+
         try:
             if images_to_send:
                 content = images_to_send + [prompt]
                 response = st.session_state.model.generate_content(content)
             else:
                 response = st.session_state.model.generate_content(prompt)
-            
+
             full_response = response.text
-            
+
             message_placeholder.markdown(full_response)
-            
+
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
+
             st.session_state.uploaded_images = []
-            
+
         except Exception as e:
             error_message = f"エラーが発生しました: {str(e)}"
             message_placeholder.markdown(error_message)
@@ -153,13 +151,13 @@ if prompt := st.chat_input("メッセージを入力してください"):
 
 with st.sidebar:
     st.header("設定")
-    
+
     if st.button("ログアウト", type="secondary"):
         st.session_state["password_correct"] = False
         st.rerun()
-    
+
     st.markdown("---")
-    
+
     model_name = st.selectbox(
         "モデル選択",
         [
@@ -172,16 +170,16 @@ with st.sidebar:
         ],
         index=0
     )
-    
+
     if st.button("モデルを変更"):
         st.session_state.model = genai.GenerativeModel(model_name)
         st.success(f"モデルを {model_name} に変更しました")
-    
+
     if st.button("会話履歴をクリア"):
         st.session_state.messages = []
         st.session_state.uploaded_images = []
         st.rerun()
-    
+
     st.markdown("---")
     st.markdown("### 使い方")
     st.markdown("""
@@ -189,10 +187,10 @@ with st.sidebar:
     2. メッセージを入力
     3. Enterキーで送信
     4. Geminiからの応答を待つ
-    
+
     ### 対応画像形式
     PNG, JPG, JPEG, GIF, WebP
-    
+
     ### 利用可能モデル
     - **Gemini 2.5 Flash**: 最新・高速・バランス型
     - **Gemini 2.5 Pro**: 最高性能・複雑タスク対応
@@ -201,6 +199,6 @@ with st.sidebar:
     - **Gemini 1.5 Flash**: レガシーモデル
     - **Gemini 1.5 Flash-8B**: 軽量モデル
     """)
-    
+
     st.markdown("---")
     st.caption("💡 画像を添付してAIに質問できます")
