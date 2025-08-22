@@ -8,6 +8,7 @@ StreamlitとGoogle Gemini APIを使用したチャットアプリケーション
 - 🖼️ 画像添付機能（画像を分析・質問可能）
 - 💬 会話履歴の保持
 - 🔄 モデルの動的切り替え
+- 🔐 ベーシック認証によるアクセス制限
 - 🎨 直感的なUI/UX
 
 ## 使用技術
@@ -29,13 +30,25 @@ Streamlit Community Cloudでデプロイする場合：
 2. 以下を追加：
 ```toml
 GEMINI_API_KEY = "your-api-key-here"
+
+# ベーシック認証（オプション）
+AUTH_USERNAME = "admin"
+AUTH_PASSWORD = "your-secure-password"
 ```
 
 ローカルで実行する場合：
 `.env`ファイルを作成し、以下を記入：
 ```
 GEMINI_API_KEY=your-api-key-here
+
+# ベーシック認証（オプション）
+AUTH_USERNAME=admin
+AUTH_PASSWORD=your-secure-password
 ```
+
+**注意事項：**
+- `AUTH_USERNAME`と`AUTH_PASSWORD`を設定しない場合、デフォルト値（admin/password）が使用されます
+- 本番環境では必ず強力なパスワードを設定してください
 
 ### 3. ローカルでの実行
 
@@ -59,7 +72,10 @@ streamlit run app.py
 2. [Streamlit Community Cloud](https://streamlit.io/cloud)にサインイン
 3. 「New app」をクリック
 4. リポジトリを選択してデプロイ
-5. Secretsに`GEMINI_API_KEY`を設定
+5. Secretsに環境変数を設定：
+   - `GEMINI_API_KEY`: Gemini APIキー（必須）
+   - `AUTH_USERNAME`: 認証用ユーザー名（オプション）
+   - `AUTH_PASSWORD`: 認証用パスワード（オプション）
 
 ## 利用可能なモデル
 

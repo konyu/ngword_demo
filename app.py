@@ -4,12 +4,54 @@ import os
 from dotenv import load_dotenv
 from PIL import Image
 import io
+import hashlib
+import hmac
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
 st.set_page_config(page_title="Gemini Chat App", page_icon="🤖")
+
+def check_password():
+    """パスワード認証を行う関数"""
+    
+    def password_entered():
+        """パスワードが入力されたときの処理"""
+        auth_user = os.getenv("AUTH_USERNAME", "admin")
+        auth_pass = os.getenv("AUTH_PASSWORD", "password")
+        
+        if (st.session_state["username"] == auth_user and 
+            st.session_state["password"] == auth_pass):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+            del st.session_state["username"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    if not st.session_state["password_correct"]:
+        st.title("🔐 ログイン")
+        st.write("このアプリケーションにアクセスするにはログインが必要です")
+        
+        with st.form("login_form"):
+            st.text_input("ユーザー名", key="username")
+            st.text_input("パスワード", type="password", key="password")
+            submit_button = st.form_submit_button("ログイン", on_click=password_entered)
+            
+        if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+            st.error("😕 ユーザー名またはパスワードが正しくありません")
+        
+        st.markdown("---")
+        st.caption("管理者から認証情報を取得してください")
+        return False
+    
+    return True
+
+if not check_password():
+    st.stop()
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 st.title("🤖 Gemini Chat Application")
 st.write("StreamlitとGemini APIを使用したチャットアプリケーション (2025年8月最新モデル対応)")
@@ -111,6 +153,12 @@ if prompt := st.chat_input("メッセージを入力してください"):
 
 with st.sidebar:
     st.header("設定")
+    
+    if st.button("ログアウト", type="secondary"):
+        st.session_state["password_correct"] = False
+        st.rerun()
+    
+    st.markdown("---")
     
     model_name = st.selectbox(
         "モデル選択",
