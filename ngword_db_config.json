@@ -1,0 +1,9 @@
+{
+  "model_name": "TF-IDF (char-level, 2-4 ngram)",
+  "collection_name": "ng_words_simple",
+  "total_records": 100,
+  "vector_dim": 1284,
+  "created_at": "2025-08-22T18:08:12.952923",
+  "csv_file": "input.csv",
+  "vectorizer_file": "tfidf_vectorizer.pkl"
+}
