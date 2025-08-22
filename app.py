@@ -85,6 +85,27 @@ def analyze_image_with_prompt(image, prompt):
     except Exception as e:
         return None, f"エラーが発生しました: {str(e)}"
 
+def check_ngwords_in_query_strings(query_strings, threshold=0.3):
+    """query_stringリストをNGワード検索でチェック"""
+    if not query_strings:
+        return []
+    
+    vectorizer, collection = load_vectorizer_and_db()
+    if vectorizer is None or collection is None:
+        return []
+    
+    all_ngword_results = []
+    for query in query_strings:
+        if query and query.strip():
+            ngword_results = search_ng_words(query.strip(), vectorizer, collection, threshold, 5)
+            if ngword_results:
+                all_ngword_results.append({
+                    'query': query,
+                    'ngwords': ngword_results
+                })
+    
+    return all_ngword_results
+
 def display_json_data(json_data):
     """JSONデータをリスト形式で表示（新しい配列形式に対応）"""
     if isinstance(json_data, list):
@@ -114,7 +135,14 @@ def display_json_data(json_data):
 
                 title = ' / '.join(title_parts) if title_parts else f"ブロック {item_id}"
 
-                with st.expander(f"🔍 {title} (ID: {item_id})", expanded=True):
+                # NGワード検索を実行
+                ngword_results = check_ngwords_in_query_strings(query_strings)
+                has_ngwords = len(ngword_results) > 0
+                
+                # NGワードがある場合は警告アイコンを追加
+                warning_icon = "⚠️ " if has_ngwords else ""
+
+                with st.expander(f"🔍 {warning_icon}{title} (ID: {item_id})", expanded=True):
                     col1, col2 = st.columns([1, 1])
 
                     with col1:
@@ -157,6 +185,34 @@ def display_json_data(json_data):
                                 st.code(query, language="text")
                         else:
                             st.write("**🔍 クエリ文字列:** なし")
+                    
+                    # NGワード検索結果の表示
+                    if has_ngwords:
+                        st.markdown("---")
+                        st.write("**🚫 NGワード検索結果:**")
+                        
+                        for ngword_result in ngword_results:
+                            query = ngword_result['query']
+                            ngwords = ngword_result['ngwords']
+                            
+                            st.write(f"**クエリ:** `{query}`")
+                            
+                            # リスクレベル別の色分け
+                            risk_colors = {
+                                'high': '🔴',
+                                'mid': '🟡', 
+                                'low': '🟢'
+                            }
+                            
+                            for ngword in ngwords[:3]:  # 上位3件のみ表示
+                                risk_icon = risk_colors.get(ngword['risk_level'], '⚪')
+                                st.warning(f"{risk_icon} **{ngword['ng_word']}** (類似度: {ngword['similarity']:.3f}) → {ngword['replacement']}")
+                            
+                            if len(ngwords) > 3:
+                                st.caption(f"...他 {len(ngwords) - 3} 件のNGワードが検出されました")
+                    else:
+                        st.markdown("---")
+                        st.success("✅ NGワードは検出されませんでした")
             else:
                 # 従来の形式（後方互換性のため）
                 with st.expander(f"{item.get('title', item.get('name', f'アイテム'))}", expanded=True):
