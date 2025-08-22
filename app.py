@@ -2,6 +2,8 @@ import streamlit as st
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
+from PIL import Image
+import io
 
 load_dotenv()
 
@@ -18,26 +20,89 @@ if "messages" not in st.session_state:
 if "model" not in st.session_state:
     st.session_state.model = genai.GenerativeModel("gemini-2.5-flash")
 
+if "uploaded_images" not in st.session_state:
+    st.session_state.uploaded_images = []
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
+        if "images" in message and message["images"]:
+            cols = st.columns(min(len(message["images"]), 3))
+            for idx, img_data in enumerate(message["images"]):
+                with cols[idx % 3]:
+                    st.image(img_data, width=200)
         st.markdown(message["content"])
 
+with st.container():
+    col1, col2 = st.columns([1, 6])
+    
+    with col1:
+        uploaded_file = st.file_uploader(
+            "画像を添付",
+            type=['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            key="image_uploader",
+            label_visibility="collapsed"
+        )
+        
+        if uploaded_file is not None:
+            if uploaded_file not in st.session_state.uploaded_images:
+                st.session_state.uploaded_images.append(uploaded_file)
+                st.success("画像を追加しました")
+                st.rerun()
+    
+    with col2:
+        if st.session_state.uploaded_images:
+            st.write("添付画像:")
+            cols = st.columns(min(len(st.session_state.uploaded_images), 5))
+            for idx, img_file in enumerate(st.session_state.uploaded_images):
+                with cols[idx % 5]:
+                    st.image(img_file, width=100)
+                    if st.button("削除", key=f"remove_{idx}"):
+                        st.session_state.uploaded_images.pop(idx)
+                        st.rerun()
+
 if prompt := st.chat_input("メッセージを入力してください"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    images_to_send = []
+    image_data_for_history = []
+    
+    if st.session_state.uploaded_images:
+        for img_file in st.session_state.uploaded_images:
+            img_bytes = img_file.read()
+            img = Image.open(io.BytesIO(img_bytes))
+            images_to_send.append(img)
+            image_data_for_history.append(img_bytes)
+            img_file.seek(0)
+    
+    st.session_state.messages.append({
+        "role": "user", 
+        "content": prompt,
+        "images": image_data_for_history if image_data_for_history else None
+    })
     
     with st.chat_message("user"):
+        if image_data_for_history:
+            cols = st.columns(min(len(image_data_for_history), 3))
+            for idx, img_data in enumerate(image_data_for_history):
+                with cols[idx % 3]:
+                    st.image(img_data, width=200)
         st.markdown(prompt)
     
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         
         try:
-            response = st.session_state.model.generate_content(prompt)
+            if images_to_send:
+                content = images_to_send + [prompt]
+                response = st.session_state.model.generate_content(content)
+            else:
+                response = st.session_state.model.generate_content(prompt)
+            
             full_response = response.text
             
             message_placeholder.markdown(full_response)
             
             st.session_state.messages.append({"role": "assistant", "content": full_response})
+            
+            st.session_state.uploaded_images = []
             
         except Exception as e:
             error_message = f"エラーが発生しました: {str(e)}"
@@ -66,15 +131,19 @@ with st.sidebar:
     
     if st.button("会話履歴をクリア"):
         st.session_state.messages = []
+        st.session_state.uploaded_images = []
         st.rerun()
     
     st.markdown("---")
     st.markdown("### 使い方")
     st.markdown("""
-    1. メッセージを入力欄に入力
-    2. Enterキーを押して送信
-    3. Geminiからの応答を待つ
-    4. 必要に応じてモデルを変更
+    1. 画像を添付（オプション）
+    2. メッセージを入力
+    3. Enterキーで送信
+    4. Geminiからの応答を待つ
+    
+    ### 対応画像形式
+    PNG, JPG, JPEG, GIF, WebP
     
     ### 利用可能モデル
     - **Gemini 2.5 Flash**: 最新・高速・バランス型
@@ -84,3 +153,6 @@ with st.sidebar:
     - **Gemini 1.5 Flash**: レガシーモデル
     - **Gemini 1.5 Flash-8B**: 軽量モデル
     """)
+    
+    st.markdown("---")
+    st.caption("💡 画像を添付してAIに質問できます")
