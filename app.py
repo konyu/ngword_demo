@@ -6,11 +6,14 @@ from PIL import Image
 import io
 import json
 import re
-import chromadb
 import pickle
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
 load_dotenv()
 
@@ -90,14 +93,14 @@ def check_ngwords_in_query_strings(query_strings, threshold=0.3):
     if not query_strings:
         return []
     
-    vectorizer, collection = load_vectorizer_and_db()
-    if vectorizer is None or collection is None:
+    vectorizer, faiss_index, metadatas = load_vectorizer_and_faiss()
+    if vectorizer is None or faiss_index is None or metadatas is None:
         return []
     
     all_ngword_results = []
     for query in query_strings:
         if query and query.strip():
-            ngword_results = search_ng_words(query.strip(), vectorizer, collection, threshold, 5)
+            ngword_results = search_ng_words_faiss(query.strip(), vectorizer, faiss_index, metadatas, threshold, 5)
             if ngword_results:
                 all_ngword_results.append({
                     'query': query,
@@ -286,68 +289,57 @@ class SimpleJapaneseVectorizer:
         return vectors.toarray()
 
 @st.cache_resource
-def load_vectorizer_and_db():
-    """ベクトライザーとデータベースをロード（キャッシュ機能付き）"""
+def load_vectorizer_and_faiss():
+    """ベクトライザーとFAISSインデックスをロード（キャッシュ機能付き）"""
     try:
-        import shutil
+        if faiss is None:
+            st.error("FAISSがインストールされていません。pip install faiss-cpu を実行してください。")
+            return None, None, None
         
-        # ベクトライザーを読み込み
-        with open("tfidf_vectorizer.pkl", "rb") as f:
-            vectorizer = pickle.load(f)
+        # FAISSデータベースファイルの読み込み
+        faiss_file = "ngword_faiss.pkl"
+        if not os.path.exists(faiss_file):
+            st.error(f"FAISSデータベースファイル '{faiss_file}' が見つかりません。setup_ngword_faiss.py を実行してください。")
+            return None, None, None
         
-        # Streamlit Cloudの場合は/tmpを使用、ローカルの場合は通常のパス
-        if os.environ.get('STREAMLIT_SHARING_MODE'):
-            # Streamlit Cloud環境
-            temp_dir = "/tmp/chroma_db"
-            if not os.path.exists(temp_dir):
-                if os.path.exists("./chroma_db"):
-                    # 既存のDBを/tmpにコピー
-                    shutil.copytree("./chroma_db", temp_dir)
-                else:
-                    # DBが存在しない場合はエラー
-                    return None, None
-            chroma_path = temp_dir
-        else:
-            # ローカル環境
-            chroma_path = "./chroma_db"
+        with open(faiss_file, "rb") as f:
+            ngword_data = pickle.load(f)
         
-        chroma_client = chromadb.PersistentClient(path=chroma_path)
-        collection = chroma_client.get_collection("ng_words_simple")
-
-        return vectorizer, collection
+        vectorizer = ngword_data['vectorizer']
+        faiss_index = ngword_data['faiss_index']
+        metadatas = ngword_data['metadatas']
+        
+        return vectorizer, faiss_index, metadatas
     except Exception as e:
-        st.error(f"データベース読み込みエラー: {str(e)}")
-        return None, None
+        st.error(f"FAISSデータベース読み込みエラー: {str(e)}")
+        return None, None, None
 
-def search_ng_words(query, vectorizer, collection, threshold=0.3, max_results=10):
-    """NGワードを検索"""
+def search_ng_words_faiss(query, vectorizer, faiss_index, metadatas, threshold=0.3, max_results=10):
+    """FAISSを使用してNGワードを検索"""
     try:
-        query_embedding = vectorizer.transform([query])
-
-        results = collection.query(
-            query_embeddings=query_embedding.tolist(),
-            n_results=max_results
-        )
-
+        # クエリをベクトル化
+        query_vector = vectorizer.transform([query]).astype('float32')
+        
+        # L2正規化（コサイン類似度のため）
+        faiss.normalize_L2(query_vector)
+        
+        # FAISS検索を実行
+        similarities, indices = faiss_index.search(query_vector, max_results)
+        
         search_results = []
-        for i, (doc, metadata, distance) in enumerate(zip(
-            results['documents'][0],
-            results['metadatas'][0],
-            results['distances'][0]
-        )):
-            similarity = 1 - distance
-
-            if similarity >= threshold:
+        for similarity, idx in zip(similarities[0], indices[0]):
+            if idx >= 0 and similarity >= threshold:  # 有効なインデックス且つ閾値以上
+                metadata = metadatas[idx]
                 result = {
                     'ng_word': metadata['ng_word'],
                     'replacement': metadata['replacement'],
                     'reason': metadata['reason'],
                     'risk_level': metadata['risk_level'],
-                    'similarity': similarity,
-                    'distance': distance
+                    'similarity': float(similarity),
+                    'distance': 1.0 - float(similarity)
                 }
                 search_results.append(result)
-
+        
         return search_results
 
     except Exception as e:
@@ -595,9 +587,9 @@ with tab3:
     st.write("広告・マーケティング文言のNGワードをベクトル類似性で検出します")
 
     # データベース状況の確認
-    if not os.path.exists("./chroma_db") or not os.path.exists("tfidf_vectorizer.pkl"):
-        st.error("❌ NGワードデータベースが見つかりません。")
-        st.info("管理者に連絡してデータベースをセットアップしてもらってください。")
+    if not os.path.exists("ngword_faiss.pkl"):
+        st.error("❌ NGワードFAISSデータベースが見つかりません。")
+        st.info("setup_ngword_faiss.py を実行してデータベースをセットアップしてください。")
     else:
         # 検索パラメータ
         col1, col2 = st.columns([3, 1])
@@ -635,11 +627,11 @@ with tab3:
 
         # 検索実行
         if (search_button or query) and query.strip():
-            vectorizer, collection = load_vectorizer_and_db()
+            vectorizer, faiss_index, metadatas = load_vectorizer_and_faiss()
 
-            if vectorizer is not None and collection is not None:
+            if vectorizer is not None and faiss_index is not None and metadatas is not None:
                 with st.spinner("NGワードを検索中..."):
-                    results = search_ng_words(query, vectorizer, collection, threshold, max_results)
+                    results = search_ng_words_faiss(query, vectorizer, faiss_index, metadatas, threshold, max_results)
 
                 display_ngword_search_results(results, query)
 
@@ -683,9 +675,9 @@ with tab3:
             )
 
         if st.button("🚀 バッチチェック実行") and batch_text.strip():
-            vectorizer, collection = load_vectorizer_and_db()
-            if vectorizer is None or collection is None:
-                st.error("❌ データベースの読み込みに失敗しました。")
+            vectorizer, faiss_index, metadatas = load_vectorizer_and_faiss()
+            if vectorizer is None or faiss_index is None or metadatas is None:
+                st.error("❌ FAISSデータベースの読み込みに失敗しました。")
             else:
                 lines = [line.strip() for line in batch_text.split('\n') if line.strip()]
 
@@ -693,7 +685,7 @@ with tab3:
                 progress_bar = st.progress(0)
 
                 for i, line in enumerate(lines):
-                    results = search_ng_words(line, vectorizer, collection, batch_threshold, batch_max_results)
+                    results = search_ng_words_faiss(line, vectorizer, faiss_index, metadatas, batch_threshold, batch_max_results)
 
                     if results:
                         for result in results:

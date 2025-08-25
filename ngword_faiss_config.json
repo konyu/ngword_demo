@@ -1,0 +1,6 @@
+{
+  "total_records": 100,
+  "vector_dim": 1284,
+  "created_at": "2025-08-25T10:46:33.589586",
+  "description": "NGワードFAISSデータベース（TF-IDF + コサイン類似度）"
+}
