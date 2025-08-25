@@ -289,14 +289,34 @@ class SimpleJapaneseVectorizer:
 def load_vectorizer_and_db():
     """ベクトライザーとデータベースをロード（キャッシュ機能付き）"""
     try:
+        import shutil
+        
+        # ベクトライザーを読み込み
         with open("tfidf_vectorizer.pkl", "rb") as f:
             vectorizer = pickle.load(f)
-
-        chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        
+        # Streamlit Cloudの場合は/tmpを使用、ローカルの場合は通常のパス
+        if os.environ.get('STREAMLIT_SHARING_MODE'):
+            # Streamlit Cloud環境
+            temp_dir = "/tmp/chroma_db"
+            if not os.path.exists(temp_dir):
+                if os.path.exists("./chroma_db"):
+                    # 既存のDBを/tmpにコピー
+                    shutil.copytree("./chroma_db", temp_dir)
+                else:
+                    # DBが存在しない場合はエラー
+                    return None, None
+            chroma_path = temp_dir
+        else:
+            # ローカル環境
+            chroma_path = "./chroma_db"
+        
+        chroma_client = chromadb.PersistentClient(path=chroma_path)
         collection = chroma_client.get_collection("ng_words_simple")
 
         return vectorizer, collection
     except Exception as e:
+        st.error(f"データベース読み込みエラー: {str(e)}")
         return None, None
 
 def search_ng_words(query, vectorizer, collection, threshold=0.3, max_results=10):
