@@ -10,10 +10,52 @@ import pickle
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
+
 try:
     import faiss
 except ImportError:
     faiss = None
+
+# --- FAISS デバッグ用ユーティリティ ---
+def ensure_faiss_ok(index, qvec, k: int = 5, label: str = "sanity-check"):
+    """FAISS インデックスとクエリベクトルの整合性を確認して、
+    その場で主要パラメータと検索トップ結果を出力する。Streamlit 上に表示。
+    - index: faiss.Index（Flat/IVF/PQ など）
+    - qvec: 1D または 2D の numpy 配列（float32 推奨）
+    - k: 取得件数
+    """
+    import numpy as _np
+    import streamlit as _st
+    try:
+        import faiss as _faiss
+    except Exception as _e:
+        _st.error(f"FAISS import error: {_e}")
+        return None
+
+    _st.markdown(f"#### 🧪 FAISS Sanity Check: `{label}`")
+    _st.write({
+        "numpy": _np.__version__,
+        "faiss": getattr(_faiss, "__version__", "(unknown)"),
+        "index_type": type(index).__name__,
+        "d": getattr(index, "d", "(unknown)"),
+        "ntotal": getattr(index, "ntotal", "(unknown)")
+    })
+    if hasattr(index, "nprobe"):
+        _st.write({"nprobe": index.nprobe})
+
+    q = _np.asarray(qvec, dtype=_np.float32)
+    if q.ndim == 1:
+        q = q[None, :]
+    q = _np.ascontiguousarray(q, dtype=_np.float32)
+    _st.write({"q_shape": q.shape, "q_norm0": float(_np.linalg.norm(q[0]))})
+
+    try:
+        D, I = index.search(q, k)
+        _st.write({"topD": D[0][:min(5, k)].tolist(), "topI": I[0][:min(5, k)].tolist()})
+        return D, I
+    except Exception as _e:
+        _st.error(f"FAISS search failed in sanity check: {_e}")
+        return None
 
 load_dotenv()
 
@@ -92,11 +134,11 @@ def check_ngwords_in_query_strings(query_strings, threshold=0.3):
     """query_stringリストをNGワード検索でチェック"""
     if not query_strings:
         return []
-    
+
     vectorizer, faiss_index, metadatas = load_vectorizer_and_faiss()
     if vectorizer is None or faiss_index is None or metadatas is None:
         return []
-    
+
     all_ngword_results = []
     for query in query_strings:
         if query and query.strip():
@@ -106,7 +148,7 @@ def check_ngwords_in_query_strings(query_strings, threshold=0.3):
                     'query': query,
                     'ngwords': ngword_results
                 })
-    
+
     return all_ngword_results
 
 def display_json_data(json_data):
@@ -141,7 +183,7 @@ def display_json_data(json_data):
                 # NGワード検索を実行
                 ngword_results = check_ngwords_in_query_strings(query_strings)
                 has_ngwords = len(ngword_results) > 0
-                
+
                 # NGワードがある場合は警告アイコンを追加
                 warning_icon = "⚠️ " if has_ngwords else ""
 
@@ -188,29 +230,29 @@ def display_json_data(json_data):
                                 st.code(query, language="text")
                         else:
                             st.write("**🔍 クエリ文字列:** なし")
-                    
+
                     # NGワード検索結果の表示
                     if has_ngwords:
                         st.markdown("---")
                         st.write("**🚫 NGワード検索結果:**")
-                        
+
                         for ngword_result in ngword_results:
                             query = ngword_result['query']
                             ngwords = ngword_result['ngwords']
-                            
+
                             st.write(f"**クエリ:** `{query}`")
-                            
+
                             # リスクレベル別の色分け
                             risk_colors = {
                                 'high': '🔴',
-                                'mid': '🟡', 
+                                'mid': '🟡',
                                 'low': '🟢'
                             }
-                            
+
                             for ngword in ngwords[:3]:  # 上位3件のみ表示
                                 risk_icon = risk_colors.get(ngword['risk_level'], '⚪')
                                 st.warning(f"{risk_icon} **{ngword['ng_word']}** (類似度: {ngword['similarity']:.3f}) → {ngword['replacement']}")
-                            
+
                             if len(ngwords) > 3:
                                 st.caption(f"...他 {len(ngwords) - 3} 件のNGワードが検出されました")
                     else:
@@ -295,20 +337,20 @@ def load_vectorizer_and_faiss():
         if faiss is None:
             st.error("FAISSがインストールされていません。pip install faiss-cpu を実行してください。")
             return None, None, None
-        
+
         # FAISSデータベースファイルの読み込み
         faiss_file = "ngword_faiss.pkl"
         if not os.path.exists(faiss_file):
             st.error(f"FAISSデータベースファイル '{faiss_file}' が見つかりません。setup_ngword_faiss.py を実行してください。")
             return None, None, None
-        
+
         with open(faiss_file, "rb") as f:
             ngword_data = pickle.load(f)
-        
+
         vectorizer = ngword_data['vectorizer']
         faiss_index = ngword_data['faiss_index']
         metadatas = ngword_data['metadatas']
-        
+
         return vectorizer, faiss_index, metadatas
     except Exception as e:
         st.error(f"FAISSデータベース読み込みエラー: {str(e)}")
@@ -319,13 +361,13 @@ def search_ng_words_faiss(query, vectorizer, faiss_index, metadatas, threshold=0
     try:
         # クエリをベクトル化
         query_vector = vectorizer.transform([query]).astype('float32')
-        
+        # Ensure C-contiguous float32 for FAISS
+        import numpy as _np
+        query_vector = _np.ascontiguousarray(query_vector, dtype=_np.float32)
         # L2正規化（コサイン類似度のため）
         faiss.normalize_L2(query_vector)
-        
         # FAISS検索を実行
         similarities, indices = faiss_index.search(query_vector, max_results)
-        
         search_results = []
         for similarity, idx in zip(similarities[0], indices[0]):
             if idx >= 0 and similarity >= threshold:  # 有効なインデックス且つ閾値以上
@@ -339,9 +381,7 @@ def search_ng_words_faiss(query, vectorizer, faiss_index, metadatas, threshold=0
                     'distance': 1.0 - float(similarity)
                 }
                 search_results.append(result)
-        
         return search_results
-
     except Exception as e:
         return []
 
@@ -591,6 +631,20 @@ with tab3:
         st.error("❌ NGワードFAISSデータベースが見つかりません。")
         st.info("setup_ngword_faiss.py を実行してデータベースをセットアップしてください。")
     else:
+        # デバッグ: インデックスの読み込みとサニティチェック
+        with st.expander("🧪 FAISS デバッグ (起動時チェック)", expanded=False):
+            vec, idx, metas = load_vectorizer_and_faiss()
+            if vec is not None and idx is not None:
+                try:
+                    # ベクトライザ経由で正しい次元のダミークエリを作成
+                    sample_q = vec.transform(["テスト"]).astype('float32')
+                    import numpy as _np
+                    sample_q = _np.ascontiguousarray(sample_q, dtype=_np.float32)
+                    ensure_faiss_ok(idx, sample_q, k=3, label="initial-load")
+                except Exception as _e:
+                    st.warning(f"FAISS 初期デバッグで例外: {_e}")
+            else:
+                st.info("FAISS の読み込みに失敗したため、デバッグはスキップされました。")
         # 検索パラメータ
         col1, col2 = st.columns([3, 1])
 
@@ -631,6 +685,14 @@ with tab3:
 
             if vectorizer is not None and faiss_index is not None and metadatas is not None:
                 with st.spinner("NGワードを検索中..."):
+                    # （任意のデバッグ）このクエリでのベクトルとインデックスの整合性確認
+                    try:
+                        qv_dbg = vectorizer.transform([query]).astype('float32')
+                        import numpy as _np
+                        qv_dbg = _np.ascontiguousarray(qv_dbg, dtype=_np.float32)
+                        ensure_faiss_ok(faiss_index, qv_dbg, k=min(max_results, 5), label="pre-search")
+                    except Exception as _e:
+                        st.caption(f"(debug) ensure_faiss_ok skipped: {_e}")
                     results = search_ng_words_faiss(query, vectorizer, faiss_index, metadatas, threshold, max_results)
 
                 display_ngword_search_results(results, query)
